@@ -1,24 +1,24 @@
 {
   "auth": {
-    "description": "OOPZ 登录配置 / OOPZ auth",
+    "description": "OOPZ 凭据配置",
     "type": "object",
     "items": {
       "device_id": {
-        "description": "设备 ID / Device ID",
+        "description": "设备 ID (Device ID)",
         "type": "string",
-        "hint": "在 OOPZ 客户端注册时生成的 device_id"
+        "hint": "OOPZ 客户端注册时生成的 UUID"
       },
       "person_uid": {
-        "description": "账号 UID / Person UID",
+        "description": "用户 UID (Person UID)",
         "type": "string"
       },
       "jwt_token": {
-        "description": "JWT Token",
+        "description": "登录态 JWT Token",
         "type": "string",
         "obvious_hint": true
       },
       "private_key": {
-        "description": "RSA 私钥 (PEM) / RSA private key",
+        "description": "RSA 私钥 (PEM 格式)",
         "type": "text",
         "obvious_hint": true,
         "hint": "-----BEGIN RSA PRIVATE KEY----- ... -----END RSA PRIVATE KEY-----"
@@ -27,85 +27,91 @@
   },
 
   "stt_provider_id": {
-    "description": "STT 语音转文字 Provider / Speech-to-text",
+    "description": "STT 语音转文字 Provider ID",
     "type": "string",
-    "hint": "填写 STT Provider 的 ID（非 LLM 模型）。可在 Dashboard 的提供商列表中查看。如 mimo_stt"
+    "hint": "填写 AstrBot 中已启用的 STT 类型 Provider ID（非 LLM 模型）"
   },
   "tts_provider_id": {
-    "description": "TTS 文字转语音 Provider / Text-to-speech",
+    "description": "TTS 文字转语音 Provider ID",
     "type": "string",
-    "hint": "填写 TTS Provider 的 ID（非 LLM 模型）。可在 Dashboard 的提供商列表中查看。如 mimo_tts"
+    "hint": "填写 AstrBot 中已启用的 TTS 类型 Provider ID（非 LLM 模型）"
   },
   "llm_provider_id": {
-    "description": "对话 LLM Provider / Chat provider",
+    "description": "对话 LLM Provider ID",
     "type": "string",
     "hint": "留空则使用当前 AstrBot 会话绑定的对话模型"
   },
 
   "auto_join_channels": {
-    "description": "启动时自动加入的频道 / Auto-join channels on startup",
+    "description": "启动时自动加入的频道",
     "type": "list",
     "options": [],
     "default": [],
-    "hint": "每一项格式: area_id:channel_id，例如 12345:67890"
+    "hint": "格式: area_id:channel_id，例如 12345:67890"
   },
 
   "wake": {
-    "description": "唤醒与监听参数 / Wake word & listening",
+    "description": "唤醒词与监听参数",
     "type": "object",
     "items": {
       "wake_word": {
-        "description": "主唤醒词 / Primary wake word",
+        "description": "主唤醒词",
         "type": "string",
         "default": "bot"
       },
       "wake_variants": {
-        "description": "备用唤醒词列表 / Wake word variants",
+        "description": "备用唤醒词列表",
         "type": "list",
         "options": ["bot", "hey bot", "小机器人", "嗨", "你好"],
         "default": ["bot", "小机器人"]
       },
+      "rms_gate": {
+        "description": "RMS 音量门限 (0-0.1)，低于此值视为静音",
+        "type": "float",
+        "default": 0.01,
+        "slider": {"min": 0.001, "max": 0.1, "step": 0.005}
+      },
+      "vad_aggressiveness": {
+        "description": "VAD 灵敏度 (0-3)，越高越容易触发",
+        "type": "int",
+        "default": 2,
+        "slider": {"min": 0, "max": 3, "step": 1}
+      },
       "silence_ms_to_flush": {
-        "description": "静音多久后停止录制 (ms) / Silence to flush",
+        "description": "静音多久后停止录制 (ms)",
         "type": "int",
         "default": 700
       },
       "max_listen_seconds": {
-        "description": "单次最长录音 (秒) / Max listen seconds",
+        "description": "单次最长录音 (秒)",
         "type": "int",
         "default": 30
       },
       "min_listen_ms": {
-        "description": "低于该时长视为噪声 (ms) / Min listen ms",
+        "description": "低于该时长视为噪声 (ms)",
         "type": "int",
         "default": 400
-      },
-      "rms_gate": {
-        "description": "RMS 门限 / RMS gate",
-        "type": "float",
-        "default": 0.01,
-        "slider": {"min": 0.0, "max": 0.1, "step": 0.005}
       }
     }
   },
 
   "tts_playback": {
-    "description": "TTS 播放参数 / Playback",
+    "description": "TTS 播放参数",
     "type": "object",
     "items": {
       "speed": {
-        "description": "播放速度 / Playback speed",
+        "description": "播放速度",
         "type": "float",
         "default": 1.0,
         "slider": {"min": 0.5, "max": 2.0, "step": 0.1}
       },
       "max_text_length": {
-        "description": "单次最大字符数 / Max text length per turn",
+        "description": "单次最大字符数",
         "type": "int",
         "default": 500
       },
       "split_long_text": {
-        "description": "长文本按句切分 / Split long text by sentence",
+        "description": "长文本按句切分",
         "type": "bool",
         "default": true
       }
@@ -113,26 +119,26 @@
   },
 
   "conversation": {
-    "description": "对话历史与人格 / Conversation & Persona",
+    "description": "对话历史与人格",
     "type": "object",
     "items": {
       "enable_history": {
-        "description": "启用 per-channel 历史 / Enable per-channel history",
+        "description": "启用 per-channel 对话历史",
         "type": "bool",
         "default": true
       },
       "max_turns": {
-        "description": "保留的对话轮次 / Max turns kept",
+        "description": "保留的对话轮次",
         "type": "int",
         "default": 12
       },
       "persona_id": {
-        "description": "AstrBot 人格 ID / Persona ID（覆盖下方提示词）",
+        "description": "AstrBot 人格 ID（覆盖下方提示词）",
         "type": "string",
         "hint": "填写 AstrBot 人格管理中的人格 ID。留空则使用下方自定义系统提示词"
       },
       "system_prompt": {
-        "description": "自定义系统提示词（被人格覆盖时生效）/ Custom system prompt",
+        "description": "自定义系统提示词（被人格覆盖时生效）",
         "type": "text",
         "default": "你是一个友好的语音聊天伙伴。回答保持简短、自然、口语化，不要使用 markdown 或表情。",
         "editor_mode": true,
@@ -142,34 +148,34 @@
   },
 
   "whisper": {
-    "description": "本地唤醒词识别 / Local wake word detection",
+    "description": "本地唤醒词识别 (faster-whisper)",
     "type": "object",
     "items": {
       "enabled": {
-        "description": "启用 faster-whisper 本地预检 / Enable local wake pre-check",
+        "description": "启用本地唤醒词预检",
         "type": "bool",
         "default": true
       },
       "model_size": {
-        "description": "模型大小 / Model size",
+        "description": "模型大小 (越大越准但越慢)",
         "type": "string",
         "options": ["tiny", "base", "small", "medium"],
         "default": "tiny"
       },
       "device": {
-        "description": "推理设备 / Device",
+        "description": "推理设备",
         "type": "string",
         "options": ["cpu", "cuda"],
         "default": "cpu"
       },
       "compute_type": {
-        "description": "计算精度 / Compute type",
+        "description": "计算精度",
         "type": "string",
         "options": ["int8", "int8_float16", "float16", "float32"],
         "default": "int8"
       },
       "language": {
-        "description": "音频语言 (auto=自动) / Language",
+        "description": "音频语言 (auto=自动检测)",
         "type": "string",
         "default": "auto"
       }
@@ -177,7 +183,7 @@
   },
 
   "log_level": {
-    "description": "日志级别 / Log level",
+    "description": "日志级别",
     "type": "string",
     "options": ["DEBUG", "INFO", "WARNING", "ERROR"],
     "default": "INFO"
