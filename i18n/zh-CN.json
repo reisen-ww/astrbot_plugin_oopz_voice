@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "display_name": "OOPZ 语音聊天"
+  },
+  "commands": {
+    "oopz_status": {
+      "title": "OOPZ 状态",
+      "desc": "查看所有 OOPZ 语音频道状态"
+    },
+    "oopz_join": {
+      "title": "加入语音频道",
+      "desc": "加入指定 OOPZ 语音频道"
+    },
+    "oopz_leave": {
+      "title": "离开语音频道",
+      "desc": "离开指定 OOPZ 语音频道"
+    },
+    "oopz_say": {
+      "title": "直接 TTS",
+      "desc": "跳过 STT，直接用 TTS 播报一段文字"
+    },
+    "oopz_interrupt": {
+      "title": "打断播放",
+      "desc": "打断当前 TTS 播放"
+    },
+    "oopz_set": {
+      "title": "运行时设置",
+      "desc": "切换唤醒词 / Provider"
+    },
+    "oopz_history_clear": {
+      "title": "清空历史",
+      "desc": "清空某频道的对话历史"
+    }
+  },
+  "dashboard": {
+    "title": "OOPZ 语音控制台",
+    "status": "状态",
+    "no_sessions": "暂无活跃会话",
+    "join": "加入",
+    "leave": "离开",
+    "interrupt": "打断",
+    "say": "说",
+    "send": "发送",
+    "wake_word": "唤醒词",
+    "providers": "Provider",
+    "recent_logs": "最近日志",
+    "auto_refresh": "自动刷新",
+    "state_idle": "空闲",
+    "state_listen": "聆听",
+    "state_stt": "识别中",
+    "state_think": "思考中",
+    "state_tts": "合成中",
+    "state_speak": "播放中",
+    "state_error": "异常"
+  }
+}

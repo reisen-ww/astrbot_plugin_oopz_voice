@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "display_name": "OOPZ Voice Chat"
+  },
+  "commands": {
+    "oopz_status": {
+      "title": "OOPZ Status",
+      "desc": "Show all OOPZ voice channel status"
+    },
+    "oopz_join": {
+      "title": "Join Voice Channel",
+      "desc": "Join a specific OOPZ voice channel"
+    },
+    "oopz_leave": {
+      "title": "Leave Voice Channel",
+      "desc": "Leave a specific OOPZ voice channel"
+    },
+    "oopz_say": {
+      "title": "Direct TTS",
+      "desc": "Skip STT and TTS a text directly"
+    },
+    "oopz_interrupt": {
+      "title": "Interrupt Playback",
+      "desc": "Interrupt current TTS playback"
+    },
+    "oopz_set": {
+      "title": "Runtime Settings",
+      "desc": "Change wake word / providers"
+    },
+    "oopz_history_clear": {
+      "title": "Clear History",
+      "desc": "Clear conversation history of a channel"
+    }
+  },
+  "dashboard": {
+    "title": "OOPZ Voice Dashboard",
+    "status": "Status",
+    "no_sessions": "No active sessions",
+    "join": "Join",
+    "leave": "Leave",
+    "interrupt": "Interrupt",
+    "say": "Say",
+    "send": "Send",
+    "wake_word": "Wake word",
+    "providers": "Providers",
+    "recent_logs": "Recent logs",
+    "auto_refresh": "Auto refresh",
+    "state_idle": "Idle",
+    "state_listen": "Listen",
+    "state_stt": "STT",
+    "state_think": "Think",
+    "state_tts": "TTS",
+    "state_speak": "Speak",
+    "state_error": "Error"
+  }
+}

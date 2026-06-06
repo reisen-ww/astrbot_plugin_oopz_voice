@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OOPZ 语音控制台</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-card: #1e293b;
+      --bg-card-2: #273449;
+      --fg: #e2e8f0;
+      --fg-dim: #94a3b8;
+      --accent: #38bdf8;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 18px; margin: 0; }
+    header .status { font-size: 12px; color: var(--fg-dim); }
+    header .status .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--bad);
+      margin-right: 6px;
+    }
+    header .status.connected .dot { background: var(--good); }
+    main {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+    .card h2 {
+      font-size: 14px;
+      margin: 0 0 12px;
+      color: var(--fg-dim);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .session-list { display: flex; flex-direction: column; gap: 12px; }
+    .session {
+      background: var(--bg-card-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 12px;
+    }
+    .session .key { font-weight: 600; font-size: 14px; }
+    .session .meta { font-size: 12px; color: var(--fg-dim); }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #475569;
+      color: #f8fafc;
+    }
+    .badge.idle    { background: #475569; }
+    .badge.listen  { background: #0ea5e9; }
+    .badge.stt     { background: #6366f1; }
+    .badge.think   { background: #a855f7; }
+    .badge.tts     { background: #ec4899; }
+    .badge.speak   { background: #22c55e; }
+    .badge.error   { background: #ef4444; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row.between { justify-content: space-between; align-items: center; }
+    button {
+      background: #1d4ed8;
+      color: #fff;
+      border: 0;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.secondary { background: #475569; }
+    button.danger { background: #b91c1c; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    input, select {
+      background: #0f172a;
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+    .form .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-dim); }
+    .empty { color: var(--fg-dim); font-size: 13px; padding: 8px 0; }
+    .log, .chat-log {
+      max-height: 360px;
+      overflow-y: auto;
+      font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .log .line { padding: 2px 0; }
+    .log .user { color: #93c5fd; }
+    .log .assistant { color: #fcd34d; }
+    .log .meta { color: var(--fg-dim); }
+    .chat-log .msg { padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .chat-log .role-user { color: #93c5fd; }
+    .chat-log .role-assistant { color: #fcd34d; }
+    .chat-log .role-system { color: var(--fg-dim); font-style: italic; }
+    .provider-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: #1d4ed8;
+      color: #fff;
+      margin-right: 4px;
+      margin-top: 2px;
+    }
+    .info-row {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      font-size: 12px;
+      color: var(--fg-dim);
+    }
+    .info-row span { color: var(--fg); font-weight: 600; }
+    .info-row .warn { color: var(--warn); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎙️ OOPZ 语音控制台</h1>
+    <div class="status" id="connStatus">
+      <span class="dot"></span><span id="connText">未连接</span>
+    </div>
+  </header>
+  <main>
+    <section class="card">
+      <h2>加入 / 离开频道</h2>
+      <div class="form" style="margin-bottom: 14px;">
+        <div class="field">
+          <label>区域 ID (area_id)</label>
+          <input id="joinArea" placeholder="例: 12345" />
+        </div>
+        <div class="field">
+          <label>频道 ID (channel_id)</label>
+          <input id="joinChannel" placeholder="例: 67890" />
+        </div>
+        <button id="btnJoin">加入</button>
+      </div>
+
+      <h2>活跃会话</h2>
+      <div class="session-list" id="sessionList">
+        <div class="empty">暂无活跃会话</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>直接播报 TTS</h2>
+      <div class="form" style="margin-bottom: 14px;">
+        <div class="field">
+          <label>区域 ID</label>
+          <input id="sayArea" placeholder="area_id" />
+        </div>
+        <div class="field">
+          <label>频道 ID</label>
+          <input id="sayChannel" placeholder="channel_id" />
+        </div>
+        <div></div>
+      </div>
+      <div class="form" style="margin-bottom: 14px; grid-template-columns: 1fr auto;">
+        <div class="field">
+          <label>播报文字</label>
+          <input id="sayText" placeholder="输入要播报的文字..." />
+        </div>
+        <button id="btnSay">播报</button>
+      </div>
+
+      <h2>最近对话日志</h2>
+      <div class="log" id="log"></div>
+    </section>
+
+    <!-- Provider & Persona info -->
+    <section class="card">
+      <h2>Provider 配置</h2>
+      <div class="info-row" id="providerInfo">
+        <div>STT: <span id="pvStt">-</span></div>
+        <div>TTS: <span id="pvTts">-</span></div>
+        <div>LLM: <span id="pvLlm">-</span></div>
+      </div>
+      <div class="info-row" id="personaInfo">
+        <div>人格: <span id="pvPersona">-</span></div>
+        <div>提示词: <span id="pvPrompt" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;">-</span></div>
+      </div>
+      <div style="margin-bottom: 8px;">
+        <button id="btnRefreshProviders" class="secondary" style="font-size:11px;">刷新 Provider</button>
+      </div>
+      <div id="allProviders" class="empty">
+        <div style="color:var(--fg-dim);">点击"刷新 Provider"查看可用 Provider</div>
+      </div>
+    </section>
+
+    <!-- Per-channel conversation history -->
+    <section class="card">
+      <h2>频道对话历史</h2>
+      <div class="row" style="margin-bottom: 10px; align-items: end;">
+        <div class="field">
+          <label>区域 ID</label>
+          <input id="histArea" placeholder="area_id" style="width:100px;" />
+        </div>
+        <div class="field">
+          <label>频道 ID</label>
+          <input id="histChannel" placeholder="channel_id" style="width:100px;" />
+        </div>
+        <button id="btnLoadHistory" class="secondary">加载历史</button>
+        <span id="histKey" style="font-size:11px; color:var(--fg-dim);"></span>
+      </div>
+      <div class="chat-log" id="chatLog">
+        <div class="empty">选择频道后点击"加载历史"查看对话记录</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const bridge = window.AstrBotPluginPage;
+    let ctx = null;
+    let snapshot = { sessions: [], oopz: {}, providers: {}, persona: {} };
+    const log = document.getElementById('log');
+    const chatLog = document.getElementById('chatLog');
+
+    const STATE_CN = {
+      idle: '空闲', listen: '监听中', stt: '识别中',
+      think: '思考中', tts: '合成中', speak: '播放中', error: '异常',
+    };
+    const ROLE_CN = { user: '用户', assistant: '助手', system: '系统', meta: '信息' };
+
+    function setStatus(connected, ready) {
+      const el = document.getElementById('connStatus');
+      const text = document.getElementById('connText');
+      el.classList.toggle('connected', !!connected);
+      text.textContent = connected ? (ready ? '已连接 · 就绪' : '已连接 · 未就绪') : '未连接';
+    }
+
+    function stateBadge(state) {
+      return `<span class="badge ${state}">${STATE_CN[state] || state}</span>`;
+    }
+
+    function renderSessions() {
+      const container = document.getElementById('sessionList');
+      const list = snapshot.sessions || [];
+      if (!list.length) {
+        container.innerHTML = '<div class="empty">暂无活跃会话</div>';
+        return;
+      }
+      container.innerHTML = list.map(s => `
+        <div class="session" data-key="${s.key}">
+          <div class="row between">
+            <span class="key">${s.key}</span>
+            ${stateBadge(s.state)}
+          </div>
+          <div class="meta">轮次=${s.turn_count} · 输入: ${escape(s.last_text_in || '')}</div>
+          <div class="meta">输出: ${escape(s.last_text_out || '')}</div>
+          <div class="row" style="grid-column: 1 / -1; justify-content: flex-end;">
+            <button class="secondary" data-act="interrupt" data-key="${s.key}">打断</button>
+            <button class="danger" data-act="leave" data-key="${s.key}">离开</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderProviders() {
+      const pv = snapshot.providers || {};
+      document.getElementById('pvStt').textContent = pv.stt || '-';
+      document.getElementById('pvTts').textContent = pv.tts || '-';
+      document.getElementById('pvLlm').textContent = pv.llm || '(当前会话)';
+
+      const pa = snapshot.persona || {};
+      document.getElementById('pvPersona').textContent = pa.active_id || '(自定义)';
+      const sp = (pa.system_prompt || '').substring(0, 60);
+      document.getElementById('pvPrompt').textContent = sp || '-';
+      if (!pa.active_id) document.getElementById('pvPrompt').textContent = sp || '默认';
+
+      // Fancy provider list
+      const container = document.getElementById('allProviders');
+      const at = pv.available_tts || [];
+      const as = pv.available_stt || [];
+      const al = pv.available_llm || [];
+      let html = '<div style="font-size:11px; color:var(--fg-dim); margin-bottom:6px;">可用 Provider（来自 AstrBot）：</div>';
+      html += '<div style="margin-bottom:4px;"><b>STT (语音转文字):</b> ';
+      html += at.length ? at.map(p => `<span class="provider-tag">${p.name||p.id}</span>`).join('') : '<span class="warn">无</span>';
+      html += '</div>';
+      html += '<div style="margin-bottom:4px;"><b>TTS (文字转语音):</b> ';
+      html += as.length ? as.map(p => `<span class="provider-tag">${p.name||p.id}</span>`).join('') : '<span class="warn">无</span>';
+      html += '</div>';
+      html += '<div><b>LLM (对话):</b> ';
+      html += al.length ? al.map(p => `<span class="provider-tag">${p.name||p.id}</span>`).join('') : '<span class="warn">无</span>';
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function escape(s) {
+      return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    }
+
+    function appendLog(role, text) {
+      const el = document.createElement('div');
+      el.className = 'line ' + (role || 'meta');
+      const ts = new Date().toLocaleTimeString('zh-CN');
+      const label = ROLE_CN[role] || role || '信息';
+      el.textContent = `[${ts}] ${label}: ${text}`;
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      while (log.childElementCount > 200) { log.removeChild(log.firstChild); }
+    }
+
+    function renderHistory(data) {
+      const history = data.history || [];
+      if (!history.length) {
+        chatLog.innerHTML = '<div class="empty">该频道暂无对话记录</div>';
+        return;
+      }
+      chatLog.innerHTML = history.map(m => {
+        const cls = `role-${m.role || 'system'}`;
+        const label = ROLE_CN[m.role] || m.role || 'system';
+        return `<div class="msg ${cls}"><b>${label}:</b> ${escape(m.content || '')}</div>`;
+      }).join('');
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    /* ---- API helpers ---- */
+    async function refreshSnapshot() {
+      try {
+        const res = await bridge.apiGet('status');
+        snapshot = res || snapshot;
+        renderSessions();
+        renderProviders();
+        setStatus(snapshot.oopz && snapshot.oopz.connected, snapshot.oopz && snapshot.oopz.ready);
+      } catch (e) { console.error('status fetch failed', e); }
+    }
+
+    async function loadHistory() {
+      const area = document.getElementById('histArea').value.trim();
+      const channel = document.getElementById('histChannel').value.trim();
+      if (!area || !channel) return;
+      const res = await bridge.apiGet('history?area=' + encodeURIComponent(area) + '&channel=' + encodeURIComponent(channel));
+      document.getElementById('histKey').textContent = area + ':' + channel;
+      renderHistory(res || {});
+    }
+
+    async function loadProviders() {
+      const res = await bridge.apiGet('providers');
+      if (res && res.providers) {
+        snapshot.providers = res.providers;
+        renderProviders();
+      }
+      const pr = await bridge.apiGet('personas');
+      if (pr && pr.persona !== undefined) {
+        snapshot.persona = { active_id: pr.active_id || '' };
+      }
+    }
+
+    async function doJoin() {
+      const area = document.getElementById('joinArea').value.trim();
+      const channel = document.getElementById('joinChannel').value.trim();
+      if (!area || !channel) return;
+      const res = await bridge.apiPost('join', { area_id: area, channel_id: channel });
+      if (res && res.ok) {
+        snapshot = res.snapshot || snapshot;
+        renderSessions();
+        renderProviders();
+      } else { alert('加入失败: ' + (res && res.error)); }
+    }
+
+    async function doSay() {
+      const area = document.getElementById('sayArea').value.trim();
+      const channel = document.getElementById('sayChannel').value.trim();
+      const text = document.getElementById('sayText').value.trim();
+      if (!area || !channel || !text) return;
+      const res = await bridge.apiPost('say', { area_id: area, channel_id: channel, text });
+      if (!(res && res.ok)) { alert('播报失败: ' + (res && res.error)); }
+    }
+
+    function delegateClicks(e) {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const key = btn.dataset.key;
+      const act = btn.dataset.act;
+      if (!key) return;
+      const [area, channel] = key.split(':');
+      if (act === 'leave') {
+        bridge.apiPost('leave', { area_id: area, channel_id: channel }).then(refreshSnapshot);
+      } else if (act === 'interrupt') {
+        bridge.apiPost('interrupt', { area_id: area, channel_id: channel });
+      }
+    }
+
+    document.getElementById('btnJoin').addEventListener('click', doJoin);
+    document.getElementById('btnSay').addEventListener('click', doSay);
+    document.getElementById('btnLoadHistory').addEventListener('click', loadHistory);
+    document.getElementById('btnRefreshProviders').addEventListener('click', loadProviders);
+    document.getElementById('sessionList').addEventListener('click', delegateClicks);
+
+    (async () => {
+      ctx = await bridge.ready();
+      await refreshSnapshot();
+      await loadProviders();
+
+      bridge.subscribeSSE('sse', {
+        snapshot: (data) => {
+          snapshot = data;
+          renderSessions();
+          renderProviders();
+          setStatus(data.oopz && data.oopz.connected, data.oopz && data.oopz.ready);
+        },
+        update: (data) => {
+          if (data.type === 'snapshot' && data.snapshot) {
+            const s = data.snapshot;
+            const idx = (snapshot.sessions || []).findIndex(x => x.key === s.key);
+            if (idx >= 0) snapshot.sessions[idx] = s;
+            else (snapshot.sessions = snapshot.sessions || []).push(s);
+            renderSessions();
+          } else if (data.type === 'session_left') {
+            snapshot.sessions = (snapshot.sessions || []).filter(s => s.key !== data.key);
+            renderSessions();
+          } else if (data.type === 'session_joined' && data.snapshot) {
+            const k = data.snapshot.key;
+            const idx = (snapshot.sessions || []).findIndex(s => s.key === k);
+            if (idx >= 0) snapshot.sessions[idx] = data.snapshot;
+            else (snapshot.sessions = snapshot.sessions || []).push(data.snapshot);
+            renderSessions();
+          } else if (data.type === 'log') {
+            appendLog(data.role, data.text);
+          }
+        },
+      });
+    })();
+  </script>
+</body>
+</html>

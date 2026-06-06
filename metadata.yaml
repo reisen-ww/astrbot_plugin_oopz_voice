@@ -1,0 +1,14 @@
+name: astrbot_plugin_oopz_voice
+display_name: OOPZ 语音聊天 / OOPZ Voice Chat
+short_desc: 让 Bot 加入 OOPZ 语音频道并与用户语音对话。
+desc: |
+  通过 oopz-sdk 连接 OOPZ 平台，加入指定语音频道；通过 wake word 唤醒，
+  调用 AstrBot 已配置的 STT/LLM/TTS Provider 完成 听→想→说 循环。
+  不桥接 OOPZ 文字消息到 AstrBot，专注语音频道。
+  Requires Playwright Chromium for OOPZ voice streaming.
+version: v0.1.0
+author: Reisen-awa
+repo: https://github.com/yourname/astrbot_plugin_oopz_voice
+astrbot_version: ">=4.16,<5"
+support_platforms: []
+logo: logo.png

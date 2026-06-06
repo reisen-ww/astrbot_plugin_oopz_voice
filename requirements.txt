@@ -1,0 +1,26 @@
+# NOTE: `oopz-sdk` is intentionally NOT listed here.
+# `oopz-sdk 0.13.x` pins `cryptography<48`, but AstrBot core requires
+# `cryptography>=48`. AstrBot's pip installer enforces a version-protection
+# policy and will refuse the downgrade. We therefore install `oopz-sdk`
+# automatically from `initialize()` using `pip install --no-deps`, which
+# bypasses the conflict — `cryptography` 48.x is API-compatible with what
+# oopz-sdk uses internally.
+#
+# If you prefer to install it yourself (recommended for reproducibility):
+#   pip install oopz-sdk --no-deps
+#
+# Everything else below is safe for AstrBot's installer.
+#
+# NOTE: `webrtcvad` is also intentionally NOT listed.
+# `webrtcvad 2.0.10` ships only an sdist on PyPI, with no pre-built wheels
+# for Python 3.12 on Windows. AstrBot's pip installer will attempt to build
+# it from source and fail on machines without a C toolchain. We use `pydub`
+# (which has pre-built wheels everywhere) for silence detection instead, with
+# an energy-based RMS fallback. If you want webrtcvad anyway and have a C
+# toolchain installed, you can:
+#   pip install webrtcvad
+# after the plugin is loaded and `pydub.detect_silence` will still be used.
+aiohttp>=3.9.0
+pydub>=0.25.1
+numpy>=1.24
+faster-whisper>=1.0.0
