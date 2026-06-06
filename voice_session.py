@@ -37,6 +37,8 @@ from .provider_bridge import (
     tts_to_wav,
 )
 from .vad import PcmSegmenter, VadConfig, WakeWordDetector
+import io
+import wave
 
 
 class VoiceState(str, Enum):
@@ -360,8 +362,6 @@ class VoiceSession:
         if self._tts_speed and abs(self._tts_speed - 1.0) > 1e-3:
             pcm = change_speed(pcm, self._tts_speed)
         # Re-wrap as WAV for the SDK voice backend
-        import io
-        import wave
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             wf.setnchannels(1)

@@ -30,8 +30,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import inspect
-import io
-import wave
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from astrbot.api import AstrBotConfig, logger
@@ -151,16 +149,6 @@ def _extract_audio_frame(data: Dict[str, Any]):
     if not isinstance(pcm, (bytes, bytearray)):
         pcm = b""
     return area, channel, user, bytes(pcm)
-
-
-def _wrap_pcm_as_wav(pcm: bytes, sample_rate: int, channels: int, sample_width: int) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(sample_width)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm)
-    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
