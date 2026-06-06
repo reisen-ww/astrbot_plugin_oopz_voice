@@ -20,39 +20,165 @@ WebUI APIs (auto-registered):
     POST /.../interrupt   — interrupt playback
     POST /.../say         — direct TTS
     POST /.../provider    — switch provider
-    GET  /.../sse         — Server‑Sent Events
-    GET  /.../history?area=&channel=  — per‑channel conversation
+    GET  /.../sse         — Server-Sent Events
+    GET  /.../history?area=&channel=  — per-channel conversation
     GET  /.../providers   — list available STT / TTS / LLM providers
     GET  /.../personas    — list available AstrBot personas
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+import base64
+import inspect
+import io
+import wave
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 from .conversation_store import ConversationStore
-from .oopz_client import OopzAuth, OopzClient, ensure_oopz_sdk_installed
-from .oopz_event_router import OopzEventRouter
 from .vad import VadConfig
 from .voice_session import VoiceSession, _ContextHolder
 
 
-def _register_dashboard_routes(plugin: "OopzVoicePlugin") -> None:
-    """Register WebUI routes against the plugin's context.
+# ---------------------------------------------------------------------------
+# SDK import & auto-install
+# ---------------------------------------------------------------------------
 
-    Imported lazily so a missing `pages/` folder doesn't break the plugin.
-    """
+try:
+    from oopz_sdk import OopzBot, OopzConfig  # type: ignore
+    _OOPZ_AVAILABLE = True
+    _IMPORT_ERROR: Optional[str] = None
+except Exception as exc:
+    OopzBot = None  # type: ignore
+    OopzConfig = None  # type: ignore
+    _OOPZ_AVAILABLE = False
+    _IMPORT_ERROR = str(exc)
+
+
+async def _ensure_oopz_sdk_installed(pip_install_timeout: int = 180) -> bool:
+    """Install oopz-sdk via pip with --no-deps."""
+    global _OOPZ_AVAILABLE, _IMPORT_ERROR, OopzBot, OopzConfig
+    if _OOPZ_AVAILABLE:
+        return True
+    import subprocess
+    import sys
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-deps",
+             "--disable-pip-version-check", "oopz-sdk"],
+            capture_output=True, text=True, timeout=pip_install_timeout,
+        )
+    except Exception as exc:
+        logger.error(f"[oopz] pip install oopz-sdk failed: {exc}")
+        return False
+    if proc.returncode != 0:
+        logger.warning(
+            f"[oopz] pip install oopz-sdk returned {proc.returncode}: "
+            f"{(proc.stderr or proc.stdout).strip()[:300]}"
+        )
+    try:
+        import importlib
+        if "oopz_sdk" in sys.modules:
+            importlib.reload(sys.modules["oopz_sdk"])
+        mod = importlib.import_module("oopz_sdk")
+        OopzBot = getattr(mod, "OopzBot", None)
+        OopzConfig = getattr(mod, "OopzConfig", None)
+        if OopzBot is not None and OopzConfig is not None:
+            _OOPZ_AVAILABLE = True
+            _IMPORT_ERROR = None
+            logger.info("[oopz] oopz-sdk installed and importable")
+            return True
+    except Exception as exc:
+        _IMPORT_ERROR = str(exc)
+        logger.warning(f"[oopz] oopz-sdk still not importable: {exc}")
+    logger.info(
+        "[oopz] oopz-sdk installed but not yet importable. "
+        "Please click 'Reload plugin' in the WebUI."
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Audio event detection (ported from oopz_client.py)
+# ---------------------------------------------------------------------------
+
+_AUDIO_EVENT_HINTS = ("audio", "voice", "frame", "pcm", "opus", "rtc", "track")
+_AREA_KEYS = ("area_id", "area", "areaId")
+_CHANNEL_KEYS = ("channel_id", "channel", "channelId")
+_USER_KEYS = ("user_id", "user", "sender", "uid", "userId")
+_PCM_KEYS = ("pcm", "data", "audio", "frame", "samples", "payload")
+
+
+def _to_dict(obj: Any) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in vars(obj).items() if not k.startswith("_")}
+    return {"value": str(obj)}
+
+
+def _first(data: Dict[str, Any], keys: tuple, default: Any = None) -> Any:
+    for k in keys:
+        if k in data:
+            return data[k]
+    return default
+
+
+def _looks_like_audio_event(data: Dict[str, Any]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    lowered_keys = {str(k).lower() for k in data.keys()}
+    return any(h in k for h in _AUDIO_EVENT_HINTS for k in lowered_keys)
+
+
+def _extract_audio_frame(data: Dict[str, Any]):
+    if isinstance(data, (bytes, bytearray)):
+        return "?", "?", "?", bytes(data)
+    if not isinstance(data, dict):
+        return "?", "?", "?", b""
+    area = str(_first(data, _AREA_KEYS, "?"))
+    channel = str(_first(data, _CHANNEL_KEYS, "?"))
+    user = str(_first(data, _USER_KEYS, "?"))
+    pcm: Any = _first(data, _PCM_KEYS, b"")
+    if isinstance(pcm, str):
+        try:
+            pcm = base64.b64decode(pcm)
+        except Exception:
+            pcm = pcm.encode("utf-8")
+    if not isinstance(pcm, (bytes, bytearray)):
+        pcm = b""
+    return area, channel, user, bytes(pcm)
+
+
+def _wrap_pcm_as_wav(pcm: bytes, sample_rate: int, channels: int, sample_width: int) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Dashboard routes
+# ---------------------------------------------------------------------------
+
+def _register_dashboard_routes(plugin: "OopzVoicePlugin") -> None:
     try:
         from .pages.voice_dashboard.api_handler import register_routes
-    except Exception as exc:  # pragma: no cover - filesystem race
+    except Exception as exc:
         logger.warning(f"[oopz] cannot import dashboard routes: {exc}")
         return
     register_routes(plugin, plugin.context.register_web_api)
 
+
+# ---------------------------------------------------------------------------
+# Plugin
+# ---------------------------------------------------------------------------
 
 class OopzVoicePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
@@ -61,15 +187,20 @@ class OopzVoicePlugin(Star):
         self.context = context
         _ContextHolder.default = context
 
-        self._oopz = OopzClient(_read_auth(config))
-        self._router = OopzEventRouter(self._oopz)
+        self._bot: Any = None
+        self._voice: Any = None
+        self._connected = False
+        self._ready = False
+        self._joined_channels: Set[tuple[str, str]] = set()
+        self._run_task: Optional[asyncio.Task] = None
+        self._stopped = asyncio.Event()
+
         self._conversation = ConversationStore(
             self,
             max_turns=int((config.get("conversation") or {}).get("max_turns", 12)),
             enable=bool((config.get("conversation") or {}).get("enable_history", True)),
         )
         self._sessions: Dict[str, VoiceSession] = {}
-        self._status_listeners: List[Callable[[Dict[str, Any]], Awaitable[None]]] = []
         self._sse_clients: List[asyncio.Queue] = []
         self._sse_lock = asyncio.Lock()
         self._status_lock = asyncio.Lock()
@@ -82,23 +213,21 @@ class OopzVoicePlugin(Star):
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        await self._router.start()
         _register_dashboard_routes(self)
-        if not self._oopz.status.sdk_available:
+        if not _OOPZ_AVAILABLE:
             logger.info(
-                f"[oopz] oopz-sdk not importable: {self._oopz.status.sdk_import_error};"
+                f"[oopz] oopz-sdk not importable: {_IMPORT_ERROR};"
                 " attempting automatic install via pip --no-deps"
             )
-            await ensure_oopz_sdk_installed()
-        if not self._oopz.status.sdk_available:
-            logger.warning(
-                f"[oopz] oopz-sdk still unavailable: {self._oopz.status.sdk_import_error}"
-            )
+            await _ensure_oopz_sdk_installed()
+        if not _OOPZ_AVAILABLE:
+            logger.warning(f"[oopz] oopz-sdk still unavailable: {_IMPORT_ERROR}")
         await self._try_auto_start()
         logger.info("[oopz] plugin initialized")
 
     async def terminate(self) -> None:
         self._terminated = True
+        self._stopped.set()
         async with self._status_lock:
             sessions = list(self._sessions.values())
         for s in sessions:
@@ -106,10 +235,7 @@ class OopzVoicePlugin(Star):
                 await s.interrupt()
             except Exception:
                 pass
-        try:
-            await self._oopz.stop()
-        except Exception as exc:
-            logger.warning(f"[oopz] stop error: {exc}")
+        await self._stop_bot()
         async with self._sse_lock:
             for q in self._sse_clients:
                 try:
@@ -118,6 +244,191 @@ class OopzVoicePlugin(Star):
                     pass
             self._sse_clients.clear()
         logger.info("[oopz] plugin terminated")
+
+    # ------------------------------------------------------------------
+    # SDK bot management
+    # ------------------------------------------------------------------
+
+    async def _start_bot(self) -> None:
+        if not _OOPZ_AVAILABLE:
+            raise RuntimeError(
+                f"oopz-sdk is not importable: {_IMPORT_ERROR}. "
+                "Install it with `pip install oopz-sdk --no-deps`."
+            )
+        if self._bot is not None:
+            logger.info("[oopz] bot already running")
+            return
+
+        auth = self.config.get("auth") or {}
+        cfg = OopzConfig(
+            device_id=str(auth.get("device_id", "") or "").strip(),
+            person_uid=str(auth.get("person_uid", "") or "").strip(),
+            jwt_token=str(auth.get("jwt_token", "") or "").strip(),
+            private_key=str(auth.get("private_key", "") or ""),
+        )
+        bot = OopzBot(
+            cfg,
+            on_ready=self._on_ready,
+            on_close=self._on_disconnect,
+            on_error=self._on_error,
+            on_raw_event=self._on_raw_event,
+            on_message=self._on_message,
+        )
+        self._bot = bot
+        self._voice = getattr(bot, "voice", None)
+        self._connected = True
+
+        self._run_task = asyncio.create_task(self._run_forever(), name="oopz-bot")
+        logger.info("[oopz] bot started")
+
+    async def _stop_bot(self) -> None:
+        if self._bot is not None:
+            try:
+                stop = getattr(self._bot, "stop", None)
+                if stop is not None:
+                    result = stop()
+                    if inspect.iscoroutine(result):
+                        await result
+            except Exception as exc:
+                logger.warning(f"[oopz] bot.stop() error: {exc}")
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
+            try:
+                await self._run_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._run_task = None
+        self._bot = None
+        self._voice = None
+        self._connected = False
+        self._ready = False
+
+    async def _run_forever(self) -> None:
+        backoff = 5.0
+        while not self._stopped.is_set():
+            try:
+                run = self._bot.run()
+                if inspect.iscoroutine(run):
+                    await run
+                else:
+                    while not self._stopped.is_set() and self._connected:
+                        await asyncio.sleep(0.5)
+                backoff = 5.0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"[oopz] connection error: {exc}")
+            finally:
+                self._connected = False
+                self._ready = False
+            if self._stopped.is_set():
+                break
+            logger.info(f"[oopz] reconnecting in {backoff:.1f}s")
+            try:
+                await asyncio.wait_for(self._stopped.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2, 60.0)
+
+    # ------------------------------------------------------------------
+    # SDK event handlers
+    # ------------------------------------------------------------------
+
+    async def _on_ready(self, *_args, **_kwargs) -> None:
+        self._ready = True
+        logger.info("[oopz] ready")
+        for area, channel in list(self._joined_channels):
+            try:
+                await self._voice_join(area, channel)
+            except Exception as exc:
+                logger.warning(f"[oopz] re-join {area}/{channel} failed: {exc}")
+
+    async def _on_disconnect(self, *_args, **_kwargs) -> None:
+        self._ready = False
+        logger.warning("[oopz] disconnected")
+
+    async def _on_error(self, *_args, **_kwargs) -> None:
+        err = str(_args[0] if _args else _kwargs)
+        logger.error(f"[oopz] on_error: {err}")
+
+    async def _on_message(self, message: Any, *_args, **_kwargs) -> None:
+        try:
+            text = getattr(message, "content", None) or getattr(message, "text", None) or str(message)
+            sender = getattr(message, "sender", None)
+            sender_name = getattr(sender, "nickname", None) or getattr(sender, "user_id", "?")
+            area = getattr(message, "area_id", "?")
+            channel = getattr(message, "channel_id", "?")
+            logger.debug(f"[oopz] text message {area}/{channel} {sender_name}: {text}")
+        except Exception:
+            pass
+
+    async def _on_raw_event(self, event: Any) -> None:
+        """Sniff for voice frames from the SDK's raw WS event stream."""
+        try:
+            data = _to_dict(event)
+        except Exception:
+            data = {"raw": str(event)}
+        try:
+            if _looks_like_audio_event(data):
+                area, channel, user, pcm = _extract_audio_frame(data)
+                if pcm:
+                    key = f"{area}:{channel}"
+                    session = self._sessions.get(key)
+                    if session is not None:
+                        try:
+                            await session.feed_pcm(pcm, user=user)
+                        except Exception as exc:
+                            logger.warning(f"[oopz] audio feed error {key}: {exc}")
+        except Exception as exc:
+            logger.debug(f"[oopz] raw event parse error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Voice channel control
+    # ------------------------------------------------------------------
+
+    async def _voice_join(self, area_id: str, channel_id: str) -> None:
+        if not self._voice:
+            raise RuntimeError("OOPZ voice service is not available")
+        join = getattr(self._voice, "join", None)
+        if join is None:
+            raise RuntimeError("Voice service has no `join` method")
+        try:
+            result = join(area=area_id, channel=channel_id)
+            if inspect.iscoroutine(result):
+                result = await result
+        except TypeError:
+            result = join(area_id, channel_id)
+            if inspect.iscoroutine(result):
+                result = await result
+        self._joined_channels.add((area_id, channel_id))
+        logger.info(f"[oopz] joined voice {area_id}/{channel_id}")
+
+    async def _voice_leave(self, area_id: str, channel_id: str) -> None:
+        if self._voice is not None:
+            leave = getattr(self._voice, "leave", None)
+            if leave is not None:
+                try:
+                    result = leave()
+                    if inspect.iscoroutine(result):
+                        await result
+                except Exception as exc:
+                    logger.debug(f"[oopz] voice.leave() failed: {exc}")
+        self._joined_channels.discard((area_id, channel_id))
+        logger.info(f"[oopz] left voice {area_id}/{channel_id}")
+
+    async def _voice_play_bytes(self, wav_bytes: bytes) -> None:
+        """Push WAV audio to the joined voice channel via SDK."""
+        if not self._voice:
+            raise RuntimeError("Voice service is not available")
+        play_bytes = getattr(self._voice, "play_bytes", None)
+        if play_bytes is None:
+            raise RuntimeError("Voice service has no `play_bytes` method")
+        try:
+            result = play_bytes(wav_bytes, mime_type="audio/wav")
+        except TypeError:
+            result = play_bytes(wav_bytes)
+        if inspect.iscoroutine(result):
+            await result
 
     # ------------------------------------------------------------------
     # Auto-start
@@ -135,16 +446,13 @@ class OopzVoicePlugin(Star):
                 logger.info("[oopz] auth not fully configured; skipping auto-start")
                 return
             try:
-                await self._oopz.start()
+                await self._start_bot()
                 self._started = True
             except Exception as exc:
                 logger.error(f"[oopz] failed to start: {exc}")
                 return
             for entry in (self.config.get("auto_join_channels") or []):
-                if not isinstance(entry, str):
-                    continue
-                if ":" not in entry:
-                    logger.warning(f"[oopz] bad auto_join entry: {entry!r}")
+                if not isinstance(entry, str) or ":" not in entry:
                     continue
                 area, channel = entry.split(":", 1)
                 await self._join_channel(area.strip(), channel.strip(), announce=False)
@@ -157,7 +465,7 @@ class OopzVoicePlugin(Star):
             if key in self._sessions:
                 return self._sessions[key]
         try:
-            await self._oopz.join_voice(area, channel)
+            await self._voice_join(area, channel)
         except Exception as exc:
             logger.error(f"[oopz] join_voice error: {exc}")
             if announce:
@@ -166,7 +474,6 @@ class OopzVoicePlugin(Star):
         session = self._build_session(area, channel)
         async with self._status_lock:
             self._sessions[key] = session
-        await self._router.register(session)
         if announce:
             await self._broadcast_status({
                 "type": "session_joined",
@@ -181,13 +488,12 @@ class OopzVoicePlugin(Star):
             session = self._sessions.pop(key, None)
         if session is None:
             return False
-        await self._router.unregister(area, channel)
         try:
             await session.interrupt()
         except Exception:
             pass
         try:
-            await self._oopz.leave_voice(area, channel)
+            await self._voice_leave(area, channel)
         except Exception as exc:
             logger.warning(f"[oopz] leave_voice error: {exc}")
         await self._broadcast_status({"type": "session_left", "key": key})
@@ -212,7 +518,7 @@ class OopzVoicePlugin(Star):
         return VoiceSession(
             area_id=area,
             channel_id=channel,
-            oopz=self._oopz,
+            on_push_audio=self._voice_play_bytes,
             conversation=self._conversation,
             stt_provider_id=str(self.config.get("stt_provider_id", "") or ""),
             tts_provider_id=str(self.config.get("tts_provider_id", "") or ""),
@@ -245,7 +551,6 @@ class OopzVoicePlugin(Star):
         await self._broadcast_status({"type": "log", "role": role, "text": text})
 
     async def _on_turn_complete(self, area: str, channel: str, user_text: str, assistant_text: str) -> None:
-        """Push a completed voice turn into AstrBot's conversation manager."""
         try:
             umo = f"oopz_voice:group:{area}:{channel}"
             conv_mgr = self.context.conversation_manager
@@ -290,7 +595,6 @@ class OopzVoicePlugin(Star):
                 pass
 
     def _snapshot(self) -> Dict[str, Any]:
-        # Providers — list all registered by type
         tts_list: List[Dict[str, str]] = []
         stt_list: List[Dict[str, str]] = []
         llm_list: List[Dict[str, str]] = []
@@ -311,12 +615,11 @@ class OopzVoicePlugin(Star):
             logger.debug(f"[oopz] provider enumeration failed: {exc}")
         return {
             "oopz": {
-                "connected": self._oopz.status.connected,
-                "ready": self._oopz.status.ready,
-                "joined": [c.__dict__ for c in self._oopz.status.joined],
-                "last_error": self._oopz.status.last_error,
-                "sdk_available": self._oopz.status.sdk_available,
-                "sdk_import_error": self._oopz.status.sdk_import_error,
+                "connected": self._connected,
+                "ready": self._ready,
+                "joined": [{"area_id": a, "channel_id": c} for a, c in sorted(self._joined_channels)],
+                "sdk_available": _OOPZ_AVAILABLE,
+                "sdk_import_error": _IMPORT_ERROR,
             },
             "sessions": [s.snapshot.to_dict() for s in self._sessions.values()],
             "providers": {
@@ -365,7 +668,7 @@ class OopzVoicePlugin(Star):
     async def cmd_join(self, event: AstrMessageEvent, area: str, channel: str) -> None:
         if not self._started:
             try:
-                await self._oopz.start()
+                await self._start_bot()
                 self._started = True
             except Exception as exc:
                 yield event.plain_result(f"OOPZ 启动失败: {exc}")
@@ -511,7 +814,6 @@ class OopzVoicePlugin(Star):
         return {"ok": True, "snapshot": self._snapshot()}
 
     async def api_history(self, area_id: str = "", channel_id: str = "") -> dict:
-        """Return per-channel conversation history."""
         if area_id and channel_id:
             history = await self._conversation.load(area_id, channel_id)
         else:
@@ -519,20 +821,17 @@ class OopzVoicePlugin(Star):
         return {"ok": True, "history": history, "key": f"{area_id}:{channel_id}"}
 
     async def api_providers(self) -> dict:
-        """Return available STT/TTS/LLM providers from AstrBot."""
         snap = self._snapshot()
         return {"ok": True, "providers": snap["providers"]}
 
     async def api_personas(self) -> dict:
-        """Return available AstrBot personas (sync in-memory)."""
         personas: List[Dict[str, str]] = []
         try:
             pm = self.context.persona_manager
             for p in (getattr(pm, "personas_v3", None) or []):
                 if isinstance(p, dict):
                     name = p.get("name", "")
-                    pid = name
-                    personas.append({"id": pid, "name": name})
+                    personas.append({"id": name, "name": name})
             if not personas:
                 for p in (getattr(pm, "personas", None) or []):
                     pid = getattr(p, "persona_id", "")
@@ -544,7 +843,6 @@ class OopzVoicePlugin(Star):
         return {"ok": True, "personas": personas, "active_id": active}
 
     async def api_sse(self):
-        """Async generator for Server-Sent Events."""
         q = await self._sse_subscribe()
         try:
             yield {"event": "snapshot", "data": self._snapshot()}
@@ -561,12 +859,7 @@ class OopzVoicePlugin(Star):
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _resolve_system_prompt(context: Context, persona_id: str, custom_prompt: str) -> str:
-    """Return the effective system prompt: persona prompt > custom > default.
-
-    Uses `persona_manager.get_persona_v3_by_id()` (sync, in-memory).
-    """
     if persona_id:
         try:
             pm = getattr(context, "persona_manager", None)
@@ -579,13 +872,3 @@ def _resolve_system_prompt(context: Context, persona_id: str, custom_prompt: str
         except Exception:
             pass
     return custom_prompt
-
-
-def _read_auth(config: AstrBotConfig) -> OopzAuth:
-    auth = config.get("auth") or {}
-    return OopzAuth(
-        device_id=str(auth.get("device_id", "") or "").strip(),
-        person_uid=str(auth.get("person_uid", "") or "").strip(),
-        jwt_token=str(auth.get("jwt_token", "") or "").strip(),
-        private_key=str(auth.get("private_key", "") or ""),
-    )

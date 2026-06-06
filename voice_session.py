@@ -29,7 +29,6 @@ from .audio_pipeline import (
     wav_to_pcm,
 )
 from .conversation_store import ConversationStore
-from .oopz_client import OopzClient
 from .provider_bridge import (
     clean_text_for_tts,
     llm_generate,
@@ -51,6 +50,7 @@ class VoiceState(str, Enum):
 
 
 StatusCallback = Callable[[Dict[str, Any]], Awaitable[None]]
+PushAudioCallback = Callable[[bytes], Awaitable[None]]
 
 
 @dataclass
@@ -87,7 +87,7 @@ class VoiceSession:
         self,
         area_id: str,
         channel_id: str,
-        oopz: OopzClient,
+        on_push_audio: PushAudioCallback,
         conversation: ConversationStore,
         *,
         stt_provider_id: str,
@@ -111,7 +111,7 @@ class VoiceSession:
     ) -> None:
         self.area_id = area_id
         self.channel_id = channel_id
-        self.oopz = oopz
+        self._on_push_audio = on_push_audio
         self.conversation = conversation
         self.stt_provider_id = stt_provider_id
         self.tts_provider_id = tts_provider_id
@@ -359,19 +359,22 @@ class VoiceSession:
         pcm = to_target_pcm(pcm_info)
         if self._tts_speed and abs(self._tts_speed - 1.0) > 1e-3:
             pcm = change_speed(pcm, self._tts_speed)
-        self._set_state(VoiceState.SPEAK, reason=f"push {len(pcm)} bytes")
+        # Re-wrap as WAV for the SDK voice backend
+        import io
+        import wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(TARGET_SAMPLE_RATE)
+            wf.writeframes(pcm)
+        wav_out = buf.getvalue()
+        self._set_state(VoiceState.SPEAK, reason=f"push {len(wav_out)} bytes")
         try:
-            await self.oopz.push_pcm(
-                pcm,
-                sample_rate=TARGET_SAMPLE_RATE,
-                channels=1,
-                sample_width=2,
-                area_id=self.area_id,
-                channel_id=self.channel_id,
-            )
+            await self._on_push_audio(wav_out)
         except Exception as exc:
-            logger.error(f"[oopz] push_pcm error: {exc}")
-            self._snapshot.last_error = f"push_pcm: {exc}"
+            logger.error(f"[oopz] push_audio error: {exc}")
+            self._snapshot.last_error = f"push_audio: {exc}"
         finally:
             self._set_state(VoiceState.IDLE, reason="speak done")
 
